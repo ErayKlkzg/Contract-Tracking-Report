@@ -1,0 +1,393 @@
+*&---------------------------------------------------------------------*
+*& Report ZIT_SD_FASON_TAKIP_RAPORU
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT zit_sd_fason_takip_raporu.
+TYPE-POOLS slis.
+
+
+TABLES : mard,vbak,vbap,mara,mchb,ekko,vbup,stxh,t001,vbpa,mseg.
+
+DATA : gt_items   TYPE TABLE OF zit_sd_s_fason_takip WITH HEADER LINE,
+       gt_messtab TYPE TABLE OF bdcmsgcoll WITH HEADER LINE.
+
+DATA : BEGIN OF gs_vbpa,
+         vbeln LIKE vbpa-vbeln,
+         posnr LIKE vbpa-posnr,
+         parvw LIKE vbpa-parvw,
+         name1 LIKE adrc-name1,
+         lifnr LIKE vbpa-lifnr,
+         kunnr LIKE vbpa-kunnr,
+       END OF gs_vbpa.
+DATA : gt_vbpa LIKE TABLE OF gs_vbpa.
+
+SELECTION-SCREEN BEGIN OF BLOCK sc WITH FRAME TITLE TEXT-001.
+SELECT-OPTIONS :
+  s_bukrs FOR t001-bukrs NO INTERVALS OBLIGATORY.
+SELECTION-SCREEN END OF BLOCK sc.
+
+SELECTION-SCREEN BEGIN OF BLOCK sc1 WITH FRAME TITLE TEXT-002.
+SELECT-OPTIONS:
+  sbwart FOR mseg-bwart,
+  swerks FOR mseg-werks,
+  slifnr FOR mseg-lifnr,
+  sebeln FOR mseg-ebeln,
+  svgart FOR mseg-vgart_mkpf,
+  sbudat FOR mseg-budat_mkpf.
+SELECTION-SCREEN END OF BLOCK sc1.
+
+AT SELECTION-SCREEN.
+  PERFORM check_bukrs.
+
+
+START-OF-SELECTION.
+*  loop at sbstnk.
+*   TRANSLATE sbstnk-low TO UPPER CASE .
+*   modify sbstnk.
+*  endloop.
+  CLEAR: gt_items.
+  REFRESH: gt_items.
+
+END-OF-SELECTION.
+
+  PERFORM get_data.
+  PERFORM write_data_must.
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_DATA
+*&---------------------------------------------------------------------*
+FORM get_data.
+  DATA: lv_objnr TYPE caufv-objnr,
+        lv_txt   TYPE j_txt04,
+        ls_afvv  TYPE afvv,
+        lv_count TYPE i,
+        lt_tc37a TYPE TABLE OF tc37a WITH HEADER LINE,
+        t_rfmng  LIKE vbfa-rfmng.
+  CLEAR: gt_items.
+  REFRESH: gt_items.
+
+  SELECT
+    mseg~mblnr    mseg~mjahr    mseg~zeile    mseg~kdauf    mseg~kdpos    mseg~bwart    mseg~matnr    mseg~werks
+    mseg~lgort    mseg~charg    mseg~sobkz    mseg~lifnr    mseg~menge    mseg~meins    mseg~erfmg    mseg~erfme
+    mseg~ebeln    mseg~ebelp    mseg~lsmng    mseg~lsmeh    mseg~vgart_mkpf    mseg~budat_mkpf mseg~bukrs
+    mseg~xblnr_mkpf    mseg~vbeln_im   mseg~vbelp_im mseg~shkzg makt~maktx
+    lips~pstyv lips~kdmat lips~vbeln lips~posnr vbak~bstnk vbap~posex
+
+  INTO CORRESPONDING FIELDS OF TABLE gt_items
+      FROM mseg
+      INNER JOIN makt ON mseg~matnr = makt~matnr
+      LEFT OUTER JOIN lips ON mseg~vbeln_im = lips~vbeln AND mseg~vbelp_im = lips~posnr
+      LEFT OUTER JOIN vbak ON mseg~kdauf = vbak~vbeln
+      LEFT OUTER JOIN vbap ON mseg~kdauf = vbap~vbeln AND mseg~kdpos = vbap~posnr
+      WHERE mseg~lifnr IN slifnr AND
+            mseg~bwart IN sbwart AND
+            mseg~werks IN swerks AND
+            mseg~lifnr IN slifnr AND
+            mseg~ebeln IN sebeln AND
+            mseg~vgart_mkpf IN svgart AND
+            mseg~budat_mkpf IN sbudat AND
+  ( mseg~sobkz = 'E' OR mseg~sobkz = 'O').
+  IF sy-subrc EQ 0.
+    SELECT lifnr,name1
+      FROM lfa1
+      INTO TABLE @DATA(lt_lfa1)
+      FOR ALL ENTRIES IN @gt_items
+      WHERE lifnr EQ @gt_items-lifnr
+      ORDER BY PRIMARY KEY.
+  ENDIF.
+
+  LOOP AT gt_items.
+    IF gt_items-kdmat = '' .
+      CONCATENATE gt_items-bstnk '-' gt_items-posex INTO gt_items-kdmat.
+    ENDIF.
+
+    IF gt_items-shkzg = 'H'.
+      gt_items-menge = gt_items-menge * -1.
+      gt_items-erfmg = gt_items-erfmg * -1.
+      gt_items-lsmng = gt_items-lsmng * -1.
+    ENDIF.
+
+    IF  gt_items-bwart EQ '541'
+    AND gt_items-sobkz EQ 'E'.
+      gt_items-menge = gt_items-menge * -1.
+      gt_items-erfmg = gt_items-erfmg * -1.
+      gt_items-lsmng = gt_items-lsmng * -1.
+    ENDIF.
+
+    IF  gt_items-bwart EQ '542'
+    AND gt_items-sobkz EQ 'E'.
+      gt_items-menge = gt_items-menge * -1.
+      gt_items-erfmg = gt_items-erfmg * -1.
+      gt_items-lsmng = gt_items-lsmng * -1.
+    ENDIF.
+
+
+    CASE gt_items-bwart.
+      WHEN '101'.
+        gt_items-islem ='Boyalı G / Kazan G'.
+      WHEN '102'.
+        gt_items-islem ='Boyalı G / Kazan G'.
+      WHEN '541'.
+        gt_items-islem ='Gönderilen Ham'.
+      WHEN '542'.
+        gt_items-islem ='Gönderilen Ham'.
+      WHEN '543'.
+        gt_items-islem ='Tüketilen Ham'.
+      WHEN '544'.
+        gt_items-islem ='Tüketilen Ham'.
+      WHEN OTHERS.
+        gt_items-islem ='Tanımsız'.
+    ENDCASE.
+
+    READ TABLE lt_lfa1 INTO DATA(ls_lfa1) WITH KEY lifnr = gt_items-lifnr BINARY SEARCH.
+    IF sy-subrc EQ 0.
+     gt_items-name1 = ls_lfa1-name1.
+    ENDIF.
+
+    MODIFY gt_items.
+  ENDLOOP.
+
+
+*    SELECT vbeln posnr parvw name1 lifnr kunnr
+*      FROM vbpa
+*      INNER JOIN adrc ON adrc~addrnumber EQ vbpa~adrnr
+*      INTO TABLE gt_vbpa
+*      FOR ALL ENTRIES IN gt_items
+*      WHERE vbeln EQ gt_items-vbeln
+*      AND  posnr EQ '000000'
+*      AND ( parvw EQ 'WE' OR  parvw EQ 'AG').
+*
+*
+*  LOOP AT gt_items.
+*
+*    SELECT SUM( rfmng ) FROM vbfa INTO t_rfmng
+*         WHERE  vbelv = gt_items-vbeln AND
+*                posnv =  gt_items-posnr AND
+*    vbtyp_n = 'J'.
+*    gt_items-lfimg = t_rfmng.
+*    gt_items-awmeng = gt_items-wmeng - gt_items-lfimg.
+*    IF gt_items-awmeng < 0.
+*      gt_items-awmeng = 0.
+*    ENDIF.
+*    gt_items-sptut = gt_items-wmeng * gt_items-netpr.
+*    gt_items-tstut = gt_items-lfimg * gt_items-netpr.
+*    gt_items-bktut = gt_items-awmeng * gt_items-netpr.
+*
+*    CLEAR : gs_vbpa.
+*        READ TABLE gt_vbpa INTO gs_vbpa WITH KEY vbeln = gt_items-vbeln
+*                                                 posnr = '000000'
+*                                                 parvw = 'WE'.
+*        IF sy-subrc EQ 0.
+*          gt_items-stalan = gs_vbpa-kunnr.
+*          gt_items-stalanadi = gs_vbpa-name1.
+*        ENDIF.
+*    CLEAR : gs_vbpa.
+*        READ TABLE gt_vbpa INTO gs_vbpa WITH KEY vbeln = gt_items-vbeln
+*                                                 posnr = '000000'
+*                                                 parvw = 'AG'.
+*        IF sy-subrc EQ 0.
+*          gt_items-sveren = gs_vbpa-kunnr.
+*          gt_items-sverenadi = gs_vbpa-name1.
+*        ENDIF.
+*
+*    MODIFY gt_items.
+*
+*  ENDLOOP.
+
+  "SORT gt_items BY matnr vbeln posnr .
+
+ENDFORM.                    " GET_DATA
+
+
+*&---------------------------------------------------------------------*
+*&      Form  100_pf
+*&---------------------------------------------------------------------*
+FORM 100_pf USING lt_extab TYPE kkblo_t_extab.
+  SET PF-STATUS 'STANDARD' EXCLUDING lt_extab.
+  SET TITLEBAR '100_TT'.
+ENDFORM.                                                    "100_pf
+*&---------------------------------------------------------------------*
+*&      Form  user_command_0100
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->R_UCOMM      text
+*      -->LS_SELFIELD  text
+*----------------------------------------------------------------------*
+FORM user_command_0100 USING r_ucomm
+      ls_selfield TYPE slis_selfield.
+
+  DATA: gd_repid LIKE sy-repid,
+        ref_grid TYPE REF TO cl_gui_alv_grid.
+  DATA: ls_spr TYPE zit_sd_s_stk_sip_drm_must.
+  DATA: ls_ozt TYPE zit_sd_s_stk_sip_drm_sonuc.
+  IF ref_grid IS INITIAL.
+    CALL FUNCTION 'GET_GLOBALS_FROM_SLVC_FULLSCR'
+      IMPORTING
+        e_grid = ref_grid.
+  ENDIF.
+  IF NOT ref_grid IS INITIAL.
+    CALL METHOD ref_grid->check_changed_data .
+  ENDIF.
+
+  CASE r_ucomm.
+    WHEN '&IC1'.
+      CHECK ls_selfield-value IS NOT INITIAL.
+      CASE ls_selfield-fieldname.
+        WHEN 'VBELN'.
+          SET PARAMETER ID 'AUN' FIELD ls_selfield-value.
+          CALL TRANSACTION 'VA03' AND SKIP FIRST SCREEN.
+      ENDCASE.
+    WHEN 'YENILE'.
+      PERFORM get_data.
+  ENDCASE.
+  ls_selfield-refresh = 'X'.
+  ls_selfield-row_stable = 'X'.
+ENDFORM.                 " USER_COMMAND_0100  INPUT
+
+*&---------------------------------------------------------------------*
+*&      Form  SHOW_MESSAGE
+*&---------------------------------------------------------------------*
+FORM show_message .
+  DATA lt_message_tab TYPE esp1_message_tab_type WITH HEADER LINE.
+
+  IF NOT gt_messtab[] IS INITIAL.
+    LOOP AT gt_messtab.
+      lt_message_tab-msgid = gt_messtab-msgid.
+      lt_message_tab-msgty = gt_messtab-msgtyp.
+      lt_message_tab-msgno = gt_messtab-msgnr.
+      lt_message_tab-msgv1 = gt_messtab-msgv1.
+      lt_message_tab-msgv2 = gt_messtab-msgv2.
+      lt_message_tab-msgv3 = gt_messtab-msgv3.
+      lt_message_tab-msgv4 = gt_messtab-msgv4.
+      APPEND lt_message_tab .
+    ENDLOOP.
+    CALL FUNCTION 'C14Z_MESSAGES_SHOW_AS_POPUP'
+      TABLES
+        i_message_tab = lt_message_tab[].
+
+    CLEAR gt_messtab[].
+  ENDIF.
+ENDFORM.                    " SHOW_MESSAGE
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  fill_fc
+*&---------------------------------------------------------------------*
+FORM fill_fc_must TABLES   _fc STRUCTURE lvc_s_fcat.
+
+  CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_structure_name   = 'ZIT_SD_S_FASON_TAKIP'
+      i_bypassing_buffer = 'X'
+    CHANGING
+      ct_fieldcat        = _fc[].
+
+  LOOP AT _fc.
+    CASE _fc-fieldname.
+      WHEN 'ISLEM'.
+        _fc-scrtext_l = 'İşlem Tanımı'.
+        _fc-scrtext_m = _fc-scrtext_l.
+        _fc-scrtext_s = _fc-scrtext_l.
+        _fc-reptext = _fc-scrtext_l.
+      WHEN 'LSMNG'.
+        _fc-scrtext_l = 'Kazan Giriş'.
+        _fc-scrtext_m = _fc-scrtext_l.
+        _fc-scrtext_s = _fc-scrtext_l.
+        _fc-reptext = _fc-scrtext_l.
+      WHEN 'DBRM'.
+        _fc-scrtext_l = 'Değ.Birim'.
+        _fc-scrtext_m = _fc-scrtext_l.
+        _fc-scrtext_s = _fc-scrtext_l.
+        _fc-reptext = _fc-scrtext_l.
+    ENDCASE.
+    MODIFY _fc.
+  ENDLOOP.
+ENDFORM.                    "fill_fc
+*&---------------------------------------------------------------------*
+*&      Form  write_data
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM write_data_must.
+  DATA : l_fc TYPE TABLE OF lvc_s_fcat WITH HEADER LINE,
+         l_ly TYPE lvc_s_layo,
+         l_vr TYPE disvariant.
+
+  PERFORM fill_fc_must TABLES l_fc.
+  l_vr-username = sy-uname.
+  l_vr-report = sy-repid.
+  l_ly-sel_mode = 'A'.
+  l_ly-zebra = 'X'.
+  l_ly-no_toolbar = space.
+  l_ly-info_fname = 'STOK'.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY_LVC'
+    EXPORTING
+      i_bypassing_buffer       = 'X'
+      i_callback_program       = sy-repid
+      i_callback_pf_status_set = '100_PF'
+      i_callback_user_command  = 'USER_COMMAND_0100'
+*     i_grid_settings          = gs_grid_settings
+      is_layout_lvc            = l_ly
+      it_fieldcat_lvc          = l_fc[]
+      is_variant               = l_vr
+      i_save                   = 'A'
+      i_default                = 'X'
+      i_grid_title             = 'Boyalı Kumaş Fason Takip Raporu'
+    TABLES
+      t_outtab                 = gt_items[]
+    EXCEPTIONS
+      program_error            = 1
+      OTHERS                   = 2.
+
+ENDFORM.                    " WRITE_DATA
+
+
+*&---------------------------------------------------------------------*
+*& Form CHECK_BUKRS
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM check_bukrs .
+  DATA : BEGIN OF lt_bukrs OCCURS 0,
+           bukrs LIKE vbak-bukrs_vf,
+         END OF lt_bukrs.
+
+  IF sy-ucomm EQ 'ONLI'.
+
+    CLEAR : lt_bukrs[].
+    SELECT bukrs FROM t001
+      INTO TABLE lt_bukrs
+    WHERE bukrs IN s_bukrs.
+
+    IF sy-subrc <> 0.
+      SET CURSOR FIELD 'S_BUKRS-LOW'.
+      MESSAGE 'Şirket kodu bulunmamaktadır.' TYPE 'E' .
+    ENDIF.
+
+    FREE: s_bukrs.
+
+    LOOP AT lt_bukrs.
+      AUTHORITY-CHECK OBJECT 'J_B_BUKRS'
+*           ID 'ACTVT' FIELD '01'
+           ID 'BUKRS' FIELD lt_bukrs-bukrs.
+      IF sy-subrc IS  INITIAL.
+        s_bukrs-sign = 'I'.
+        s_bukrs-option = 'EQ'.
+        s_bukrs-low = lt_bukrs-bukrs.
+        COLLECT s_bukrs.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+
+  IF s_bukrs[] IS INITIAL .
+    MESSAGE 'Şirket kodu yetkiniz bulunmamaktadır.' TYPE 'E' .
+  ENDIF.
+
+ENDFORM.
